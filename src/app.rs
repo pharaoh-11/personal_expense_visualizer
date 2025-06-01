@@ -1,7 +1,7 @@
-use chrono::NaiveDate; // Added NaiveDate
+use chrono::NaiveDate;
 use eframe::{egui, App, Frame};
-use egui::{CentralPanel, Color32, Context, Vec2}; // Removed unused Response, ScrollArea, TextStyle
-use crate::models::ExpenseCategory; // Removed unused RawTransaction
+use egui::{CentralPanel, Color32, Context, Vec2, ScrollArea, Grid, RichText}; // Removed unused TextFormat
+use crate::models::{ExpenseCategory, ProcessedTransaction, TransactionDirection};
 use crate::pie_chart;
 use crate::data_io;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 pub struct MyApp {
     expenses: Vec<ExpenseCategory>,
     income_categories: Vec<ExpenseCategory>,
-    // raw_transactions: Vec<RawTransaction>, // We might not need to store raw if processed immediately
+    all_processed_transactions: Vec<ProcessedTransaction>, // To store all transactions for table view
     current_data_file: Option<PathBuf>,
     // For manual input
     input_date_str: String,
@@ -24,14 +24,15 @@ impl MyApp {
         match data_io::load_raw_transactions_from_file(file_path) {
             Ok(raw_txs) => {
                 println!("成功从 '{}' 加载 {} 条原始交易记录。", file_path.display(), raw_txs.len());
-                let (expenses, incomes) = data_io::process_and_aggregate_transactions(&raw_txs);
+                let (processed, expenses, incomes) = data_io::process_transactions_for_display(&raw_txs);
+                self.all_processed_transactions = processed;
                 self.expenses = expenses;
                 self.income_categories = incomes;
                 self.current_data_file = Some(file_path.to_path_buf());
             }
             Err(e) => {
                 eprintln!("错误：无法从 '{}' 加载或处理交易数据: {}", file_path.display(), e);
-                // Optionally clear existing data or show an error message in UI
+                self.all_processed_transactions.clear();
                 self.expenses.clear();
                 self.income_categories.clear();
             }
@@ -44,8 +45,9 @@ impl Default for MyApp {
         let mut app = Self {
             expenses: vec![],
             income_categories: vec![],
+            all_processed_transactions: vec![],
             current_data_file: None,
-            input_date_str: ::chrono::Local::now().format("%Y/%m/%d").to_string(), // Prefixed with ::chrono
+            input_date_str: ::chrono::Local::now().format("%Y/%m/%d").to_string(),
             input_amount_str: String::new(),
             input_category_str: String::new(),
             input_is_expense: true,
@@ -119,8 +121,48 @@ impl App for MyApp {
             ui.separator();
             ui.add_space(10.0);
 
-            ui.heading("手动添加记录"); // Changed h2 to heading
-            egui::Grid::new("input_grid").num_columns(2).spacing([40.0, 4.0]).show(ui, |ui| {
+            ui.heading("交易记录明细");
+            ScrollArea::vertical().max_height(ui.available_height() * 0.3).show(ui, |ui| {
+                Grid::new("transactions_table")
+                    .num_columns(5)
+                    .spacing([10.0, 4.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        // Header
+                        ui.strong("日期");
+                        ui.strong("类别");
+                        ui.strong("项目/对方");
+                        ui.strong("金额");
+                        ui.strong("收/支");
+                        ui.end_row();
+
+                        for tx in &self.all_processed_transactions {
+                            ui.label(tx.date.format("%Y-%m-%d").to_string());
+                            ui.label(&tx.category);
+                            let item_display = if tx.original_item_name != "/" && !tx.original_item_name.is_empty() {
+                                tx.original_item_name.chars().take(30).collect::<String>() // Limit length
+                            } else {
+                                tx.original_counterparty.chars().take(30).collect::<String>()
+                            };
+                            ui.label(item_display);
+                            ui.label(format!("{:.2}", tx.amount));
+                            match tx.direction {
+                                TransactionDirection::Income => ui.label(RichText::new("收入").color(Color32::GREEN)),
+                                TransactionDirection::Expense => ui.label(RichText::new("支出").color(Color32::RED)),
+                                TransactionDirection::Neutral => ui.label("中性"),
+                            };
+                            ui.end_row();
+                        }
+                    });
+            });
+
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+            
+            ui.heading("手动添加记录");
+            Grid::new("input_grid").num_columns(2).spacing([40.0, 4.0]).show(ui, |ui| {
                 ui.label("日期 (YYYY/MM/DD):");
                 ui.text_edit_singleline(&mut self.input_date_str);
                 ui.end_row();
@@ -146,7 +188,7 @@ impl App for MyApp {
 
                 if ui.button("添加记录").clicked() {
                     // Basic validation and parsing
-                    if let (Ok(date), Ok(amount)) = (
+                    if let (Ok(_date), Ok(amount)) = ( // Changed date to _date as it's not directly used to create ExpenseCategory here
                         NaiveDate::parse_from_str(&self.input_date_str, "%Y/%m/%d"),
                         self.input_amount_str.parse::<f32>()
                     ) {

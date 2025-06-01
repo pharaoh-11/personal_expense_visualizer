@@ -1,14 +1,13 @@
-use crate::models::{RawTransaction, ExpenseCategory, TransactionDirection}; // Removed ProcessedTransaction
+use crate::models::{RawTransaction, ProcessedTransaction, ExpenseCategory, TransactionDirection}; // Added ProcessedTransaction back
 use chrono::NaiveDate;
 use eframe::egui::Color32;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap}, // Added for hashing
     fs::File,
+    hash::{Hash, Hasher}, // Added for hashing
     io::{self, BufRead, BufReader},
     path::Path,
 };
-
-// const EXPECTED_COLUMNS: usize = 11; // Already defined, can be removed if not used elsewhere
 
 pub fn load_raw_transactions_from_file(
     file_path: &Path,
@@ -145,41 +144,43 @@ fn categorize_transaction(
 }
 
 // Predefined colors for categories
-pub fn get_color_for_category(category_name: &str, index: usize) -> Color32 { // Made public
-    let colors = [
-        Color32::from_rgb(255, 99, 71),  // Tomato
-        Color32::from_rgb(60, 179, 113), // MediumSeaGreen
-        Color32::from_rgb(70, 130, 180), // SteelBlue
-        Color32::from_rgb(255, 215, 0),  // Gold
-        Color32::from_rgb(255, 165, 0), // Orange
-        Color32::from_rgb(128, 0, 128),  // Purple
-        Color32::from_rgb(0, 128, 128),  // Teal
-        Color32::from_rgb(210, 105, 30), // Chocolate
-        Color32::from_rgb(255, 20, 147), // DeepPink
-        Color32::from_rgb(0, 191, 255),  // DeepSkyBlue
-        Color32::from_rgb(124, 252, 0),  // LawnGreen
-        Color32::from_rgb(138, 43, 226), // BlueViolet
-    ];
-    // Simple hash for more varied color selection if categories exceed predefined colors
-    if category_name.len() < colors.len() {
-        colors[category_name.len() % colors.len()]
-    } else {
-        colors[index % colors.len()]
-    }
+const PREDEFINED_COLORS: [Color32; 12] = [
+    Color32::from_rgb(255, 99, 71),  // Tomato
+    Color32::from_rgb(60, 179, 113), // MediumSeaGreen
+    Color32::from_rgb(70, 130, 180), // SteelBlue
+    Color32::from_rgb(255, 215, 0),  // Gold
+    Color32::from_rgb(255, 165, 0), // Orange
+    Color32::from_rgb(128, 0, 128),  // Purple
+    Color32::from_rgb(0, 128, 128),  // Teal
+    Color32::from_rgb(210, 105, 30), // Chocolate
+    Color32::from_rgb(255, 20, 147), // DeepPink
+    Color32::from_rgb(0, 191, 255),  // DeepSkyBlue
+    Color32::from_rgb(124, 252, 0),  // LawnGreen
+    Color32::from_rgb(138, 43, 226), // BlueViolet
+];
+
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
 }
 
+pub fn get_color_for_category(category_name: &str, _index_fallback: usize) -> Color32 {
+    let hash = calculate_hash(&category_name);
+    PREDEFINED_COLORS[(hash % PREDEFINED_COLORS.len() as u64) as usize]
+}
 
-pub fn process_and_aggregate_transactions(
+pub fn process_transactions_for_display( // Renamed and changed return type
     raw_transactions: &[RawTransaction],
-) -> (Vec<ExpenseCategory>, Vec<ExpenseCategory>) {
+) -> (Vec<ProcessedTransaction>, Vec<ExpenseCategory>, Vec<ExpenseCategory>) {
+    let mut processed_txs = Vec::new();
     let mut expense_map: HashMap<String, f32> = HashMap::new();
     let mut income_map: HashMap<String, f32> = HashMap::new();
 
     for raw_tx in raw_transactions {
-        let _date = match parse_date(&raw_tx.timestamp_str) { // Changed date to _date
+        let date = match parse_date(&raw_tx.timestamp_str) {
             Some(d) => d,
             None => {
-                // eprintln!("Skipping transaction due to unparseable date: {}", raw_tx.timestamp_str);
                 continue;
             }
         };
@@ -218,22 +219,36 @@ pub fn process_and_aggregate_transactions(
             &direction,
         );
 
+        // Clone the category string for use in the HashMap.
+        // The original `category` string will be moved into `ProcessedTransaction`.
+        let category_for_map = category.clone();
+
         match direction {
             TransactionDirection::Expense => {
-                *expense_map.entry(category).or_insert(0.0) += amount;
+                *expense_map.entry(category_for_map).or_insert(0.0) += amount;
             }
             TransactionDirection::Income => {
-                *income_map.entry(category).or_insert(0.0) += amount;
+                *income_map.entry(category_for_map).or_insert(0.0) += amount;
             }
-            TransactionDirection::Neutral => {} // Already handled
+            TransactionDirection::Neutral => {} 
         }
+        
+        processed_txs.push(ProcessedTransaction {
+            date,
+            category, // Original category string is moved here
+            amount,
+            direction,
+            original_item_name: raw_tx.item_name.clone(),
+            original_counterparty: raw_tx.counterparty.clone(),
+            original_transaction_type: raw_tx.transaction_type.clone(),
+        });
     }
 
     let mut expense_categories = Vec::new();
     for (i, (name, amount)) in expense_map.into_iter().enumerate() {
-        let color = get_color_for_category(&name, i); // Get color before name is moved
+        let color = get_color_for_category(&name, i);
         expense_categories.push(ExpenseCategory {
-            name, // name is moved here
+            name,
             amount,
             color,
         });
@@ -241,13 +256,18 @@ pub fn process_and_aggregate_transactions(
 
     let mut income_categories = Vec::new();
     for (i, (name, amount)) in income_map.into_iter().enumerate() {
-        let color = get_color_for_category(&name, i + expense_categories.len()); // Get color before name is moved
+        let color = get_color_for_category(&name, i + expense_categories.len());
         income_categories.push(ExpenseCategory {
-            name, // name is moved here
+            name,
             amount,
             color,
         });
     }
+    
+    // Sort categories by amount for consistent pie chart display (optional but good)
+    expense_categories.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
+    income_categories.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
 
-    (expense_categories, income_categories)
+
+    (processed_txs, expense_categories, income_categories)
 }
