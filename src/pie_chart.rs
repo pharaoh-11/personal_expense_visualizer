@@ -11,6 +11,7 @@ pub fn draw_pie_chart(
     response: &Response, // For hover detection
     expenses: &[ExpenseCategory],
     ctx: &Context, // For tooltips
+    chart_id_source: &str, // Added for unique ID generation
 ) {
     let total_amount: f32 = expenses.iter().map(|e| e.amount).sum();
     // Assuming total_amount > 0 because this function is called only if it is.
@@ -44,7 +45,8 @@ pub fn draw_pie_chart(
 
     // Display hover information if mouse is over the chart
     if response.hovered() {
-        egui::show_tooltip_at_pointer(ctx, egui::Id::new("pie_chart_tooltip"), |ui_tooltip| {
+        let tooltip_id = egui::Id::new(format!("{}_tooltip", chart_id_source));
+        egui::show_tooltip_at_pointer(ctx, tooltip_id, |ui_tooltip| {
             for (i, text) in hover_texts.iter().enumerate() {
                  ui_tooltip.colored_label(expenses[i].color, text);
             }

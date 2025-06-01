@@ -6,11 +6,13 @@ use crate::pie_chart;
 use crate::data_io;
 use std::path::{Path, PathBuf};
 
+// Removed #[derive(Default)] to resolve conflict
 pub struct MyApp {
     expenses: Vec<ExpenseCategory>,
     income_categories: Vec<ExpenseCategory>,
-    all_processed_transactions: Vec<ProcessedTransaction>, // To store all transactions for table view
+    all_processed_transactions: Vec<ProcessedTransaction>,
     current_data_file: Option<PathBuf>,
+    
     // For manual input
     input_date_str: String,
     input_amount_str: String,
@@ -60,8 +62,13 @@ impl Default for MyApp {
     }
 }
 
+
 impl App for MyApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
+        // State for hovered segment (index, type)
+        // We'll manage this more directly in pie_chart drawing for now.
+        // let mut hovered_segment_info: Option<(usize, &'static str)> = None;
+
         CentralPanel::default().show(ctx, |ui| {
             ui.heading("个人财务可视化");
             ui.add_space(10.0);
@@ -82,38 +89,40 @@ impl App for MyApp {
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
-            
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.heading("支出概览"); // Changed h2 to heading
-                    let available_width = ui.available_width();
-                    let chart_size = available_width.min(ui.available_height() * 0.4).max(100.0);
-                    let (rect, response) = ui.allocate_exact_size(Vec2::splat(chart_size), egui::Sense::hover());
-                    let center = rect.center();
-                    let radius = chart_size / 2.0 * 0.9; // Slightly smaller radius for padding
 
-                    if self.expenses.is_empty() {
-                        ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无支出数据", egui::FontId::proportional(16.0), Color32::GRAY);
-                    } else {
-                        pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.expenses, ctx);
-                    }
-                });
+            // Pie charts section
+            let pie_chart_section_height = ui.available_height() * 0.4;
+            ui.allocate_ui(Vec2::new(ui.available_width(), pie_chart_section_height.max(150.0)), |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("支出概览");
+                        let chart_size = ui.available_width().min(ui.available_height()).max(100.0);
+                        let (rect, response) = ui.allocate_exact_size(Vec2::splat(chart_size), egui::Sense::hover().union(egui::Sense::click()));
+                        let center = rect.center();
+                        let radius = chart_size / 2.0 * 0.9;
 
-                ui.separator();
+                        if self.expenses.is_empty() {
+                            ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无支出数据", egui::FontId::proportional(16.0), Color32::GRAY);
+                        } else {
+                            pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.expenses, ctx, "expense_chart");
+                        }
+                    });
 
-                ui.vertical(|ui| {
-                    ui.heading("收入概览"); // Changed h2 to heading
-                    let available_width = ui.available_width();
-                    let chart_size = available_width.min(ui.available_height() * 0.4).max(100.0);
-                    let (rect, response) = ui.allocate_exact_size(Vec2::splat(chart_size), egui::Sense::hover());
-                    let center = rect.center();
-                    let radius = chart_size / 2.0 * 0.9;
+                    ui.separator();
 
-                    if self.income_categories.is_empty() {
-                        ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无收入数据", egui::FontId::proportional(16.0), Color32::GRAY);
-                    } else {
-                        pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.income_categories, ctx);
-                    }
+                    ui.vertical(|ui| {
+                        ui.heading("收入概览");
+                        let chart_size = ui.available_width().min(ui.available_height()).max(100.0);
+                        let (rect, response) = ui.allocate_exact_size(Vec2::splat(chart_size), egui::Sense::hover().union(egui::Sense::click()));
+                        let center = rect.center();
+                        let radius = chart_size / 2.0 * 0.9;
+
+                        if self.income_categories.is_empty() {
+                            ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无收入数据", egui::FontId::proportional(16.0), Color32::GRAY);
+                        } else {
+                            pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.income_categories, ctx, "income_chart");
+                        }
+                    });
                 });
             });
             
@@ -122,7 +131,11 @@ impl App for MyApp {
             ui.add_space(10.0);
 
             ui.heading("交易记录明细");
-            ScrollArea::vertical().max_height(ui.available_height() * 0.3).show(ui, |ui| {
+            // Allocate remaining height for table and input, ensuring some minimums
+            let remaining_height = ui.available_height();
+            let table_scroll_height = (remaining_height * 0.5).max(100.0); // Min 100px for table
+            
+            ScrollArea::vertical().max_height(table_scroll_height).show(ui, |ui| {
                 Grid::new("transactions_table")
                     .num_columns(5)
                     .spacing([10.0, 4.0])
@@ -197,29 +210,54 @@ impl App for MyApp {
                             let color = data_io::get_color_for_category(&category_name, 
                                 if self.input_is_expense { self.expenses.len() } else { self.income_categories.len() });
 
-                            let new_entry = ExpenseCategory {
-                                name: category_name,
+                            let category_name_clone = category_name.clone();
+                            let new_expense_category_entry = ExpenseCategory {
+                                name: category_name, // category_name is moved here for ExpenseCategory
                                 amount,
                                 color,
                             };
 
-                            if self.input_is_expense {
-                                // Check if category exists, if so, add to it, otherwise push new
-                                if let Some(existing_cat) = self.expenses.iter_mut().find(|cat| cat.name == new_entry.name) {
-                                    existing_cat.amount += new_entry.amount;
-                                } else {
-                                    self.expenses.push(new_entry);
-                                }
+                            let direction = if self.input_is_expense {
+                                TransactionDirection::Expense
                             } else {
-                                if let Some(existing_cat) = self.income_categories.iter_mut().find(|cat| cat.name == new_entry.name) {
-                                    existing_cat.amount += new_entry.amount;
+                                TransactionDirection::Income
+                            };
+
+                            // Add to the detailed transaction list for the table
+                            self.all_processed_transactions.push(ProcessedTransaction {
+                                date: _date, // Use the parsed date
+                                category: category_name_clone.clone(), // Use cloned category name
+                                amount,
+                                direction,
+                                original_item_name: self.input_item_str.clone(),
+                                original_counterparty: String::new(), // Manual entry might not have a counterparty
+                                original_transaction_type: "手动输入".to_string(),
+                            });
+                            
+                            // Sort all_processed_transactions by date (optional, but good for display)
+                            self.all_processed_transactions.sort_by_key(|t| t.date);
+
+
+                            if self.input_is_expense {
+                                if let Some(existing_cat) = self.expenses.iter_mut().find(|cat| cat.name == new_expense_category_entry.name) {
+                                    existing_cat.amount += new_expense_category_entry.amount;
                                 } else {
-                                    self.income_categories.push(new_entry);
+                                    self.expenses.push(new_expense_category_entry);
                                 }
+                                // Sort expenses for consistent pie chart display
+                                self.expenses.sort_by(|a,b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
+                            } else {
+                                if let Some(existing_cat) = self.income_categories.iter_mut().find(|cat| cat.name == new_expense_category_entry.name) {
+                                    existing_cat.amount += new_expense_category_entry.amount;
+                                } else {
+                                    self.income_categories.push(new_expense_category_entry);
+                                }
+                                // Sort income categories for consistent pie chart display
+                                self.income_categories.sort_by(|a,b| b.amount.partial_cmp(&a.amount).unwrap_or(std::cmp::Ordering::Equal));
                             }
                             
                             // Clear input fields
-                            self.input_date_str = ::chrono::Local::now().format("%Y/%m/%d").to_string(); // Prefixed with ::chrono
+                            self.input_date_str = ::chrono::Local::now().format("%Y/%m/%d").to_string();
                             self.input_item_str.clear();
                             self.input_amount_str.clear();
                             self.input_category_str.clear();
