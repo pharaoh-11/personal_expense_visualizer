@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = "0.27.2" # Check for the latest version of eframe
-egui = "0.27.2"   # Check for the latest version of egui
+eframe = "0.27.2"
+egui = "0.27.2"
+chrono = { version = "0.4", features = ["serde"] } # For date/time parsing
+rfd = "0.14" # For native file dialogs
 
 # We might need a CSV reader later, e.g., csv = "1.3"
-# We might need a date/time library later, e.g., chrono = "0.4"
