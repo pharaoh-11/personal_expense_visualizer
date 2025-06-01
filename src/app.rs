@@ -12,6 +12,8 @@ pub struct MyApp {
     income_categories: Vec<ExpenseCategory>,
     all_processed_transactions: Vec<ProcessedTransaction>,
     current_data_file: Option<PathBuf>,
+    hovered_expense_idx: Option<usize>, // Index of hovered segment in expenses pie
+    hovered_income_idx: Option<usize>,  // Index of hovered segment in income pie
     
     // For manual input
     input_date_str: String,
@@ -49,6 +51,8 @@ impl Default for MyApp {
             income_categories: vec![],
             all_processed_transactions: vec![],
             current_data_file: None,
+            hovered_expense_idx: None,
+            hovered_income_idx: None,
             input_date_str: ::chrono::Local::now().format("%Y/%m/%d").to_string(),
             input_amount_str: String::new(),
             input_category_str: String::new(),
@@ -104,7 +108,16 @@ impl App for MyApp {
                         if self.expenses.is_empty() {
                             ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无支出数据", egui::FontId::proportional(16.0), Color32::GRAY);
                         } else {
-                            pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.expenses, ctx, "expense_chart");
+                            // Pass current hover state and get back new hover state
+                            let new_hover_idx = pie_chart::draw_pie_chart(
+                                ui, ui.painter_at(rect), center, radius, &response, 
+                                &self.expenses, ctx, "expense_chart", self.hovered_expense_idx,
+                            );
+                            if response.hovered() { // Only update if mouse is over the chart area
+                                self.hovered_expense_idx = new_hover_idx;
+                            } else {
+                                self.hovered_expense_idx = None; // Clear hover if mouse leaves chart area
+                            }
                         }
                     });
 
@@ -120,7 +133,15 @@ impl App for MyApp {
                         if self.income_categories.is_empty() {
                             ui.painter_at(rect).text(center, egui::Align2::CENTER_CENTER, "无收入数据", egui::FontId::proportional(16.0), Color32::GRAY);
                         } else {
-                            pie_chart::draw_pie_chart(ui, ui.painter_at(rect), center, radius, &response, &self.income_categories, ctx, "income_chart");
+                            let new_hover_idx = pie_chart::draw_pie_chart(
+                                ui, ui.painter_at(rect), center, radius, &response, 
+                                &self.income_categories, ctx, "income_chart", self.hovered_income_idx,
+                            );
+                            if response.hovered() {
+                                self.hovered_income_idx = new_hover_idx;
+                            } else {
+                                self.hovered_income_idx = None;
+                            }
                         }
                     });
                 });
