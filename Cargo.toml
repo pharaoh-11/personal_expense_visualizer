@@ -1,0 +1,11 @@
+[package]
+name = "personal_expense_visualizer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.27.2" # Check for the latest version of eframe
+egui = "0.27.2"   # Check for the latest version of egui
+
+# We might need a CSV reader later, e.g., csv = "1.3"
+# We might need a date/time library later, e.g., chrono = "0.4"
